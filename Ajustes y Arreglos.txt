@@ -1,0 +1,837 @@
+- Calcula BTC a 252 dias al año pero BTC opera todos los días (Arreglar)
+	-> Quizas añadir una excepción para activos como BTC (cryptos)
+
+- He cambiado el modelo de rating pero queda ver que compile de manera correcta y que sea coherente (Arreglar)
+	-> Output "nan" en los nuevos parametros de rating por lo que el score multifactorial ahora sale "nan" tambien 
+	-> Arreglado por ahora, veremos como rinde la estrategia
+
+- Dar la posibilidad de calcular a distinto plazo, y en base a eso recalcular estrategia (pedir al usuario medio o largo)
+	-> Medio (3-6 meses)
+	-> Largo (>=1-2 años) 
+		-> No parece ser muy viable, los patrones matematicos se disipan con mucha facilidad a largo palzo, por lo que nuestro
+		modelo seria de muy poca fiabilidad a mas de 6 meses vista
+
+- Dar itervalo de precios a 52 semanas vista sobre un activo de al menos 3 fuentes distintas (y citarlas)
+	-> Alto, medio y bajo
+
+- Output del precio del activo en ese instante cuando se ejecute el main_pipeline
+	-> Si el mercado no esta abierto entonces se mostrara el precio de cierre
+
+- Comprobar el calculo de "Momentum academico" ha presentado valores muy extremos para UBER(6.5/100 pts) y META(1.1/100 pts)
+	-> Mirar si el modelo 12-1 es de verdad bueno o hay metodos mejores
+
+- Preguntar a la IA como puede mejorar nuestro algoritmo cada vez que terminemos (Que podemos añadir/sustituir/quitar)
+
+- Dar una prediccion del precio de la accion a 6 meses, con intervalos de confianza y valores de alpha del 0.9, 0.95, 0.99
+
+- ESPECIFICAR PARA CADA CAMBIO QUE NO QUITE NADA DEL OUTPUT (SOLO AÑADIR) AL NO SER QUE LO PIDA YO EXPLICITAMENTE!
+	-> cada vez que se añada un parametro nuevo al informe, actualizar el README.txt
+
+- Buscar Ineficiencias en el código
+
+
+{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{ CUANDO ESTE TERMINADO EL CODIGO }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+
+- Automatización Futura, cuando el algoritmo presente resultados coherentes
+	-> Quizas poderle dar acceso a internet y que haga una busqueda de muchas acciones y que extraiga las que mejor puntuacion media tengan
+
+{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{{ FASE 1 DEL REFACTOR - HECHO }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+
+Correcciones de corrección y reproducibilidad (ver PLAN_REFACTOR.md secciones
+1.1 a 1.12 y AUDITORIA_2026-09.md). Rama: fase1-correcciones.
+196 -> 321 tests, todos en verde.
+
+- [1.1] El informe imprimía DOS proyecciones lognormales del mismo activo con mu
+  y sigma DISTINTAS, presentándolas como comparables. Ahora ambas (Monte Carlo y
+  Opción A) consumen la misma volatilidad esperada del horizonte y respetan
+  --drift-mode. Se eliminó una segunda llamada duplicada al GARCH que pagaba un
+  ajuste MLE completo de más por corrida.
+
+- [1.2] EL SISTEMA NO ERA REPRODUCIBLE (dos corridas del mismo día daban
+  números distintos con la semilla fijada). Tres causas: la deduplicación de
+  tickers cambiaba de orden entre procesos, los modelos de árbol usaban varios
+  hilos, y se descargaban precios hasta "hoy" (barra viva). Arreglado y con
+  caché de precios por (tickers, fechas). Ver README.txt, sección de
+  reproducibilidad.
+
+- [1.3] Un Score sin dato (NaN) se imprimía como "EVITAR", la etiqueta más
+  agresiva del sistema. Ahora imprime "NO EVALUABLE" y dice QUÉ factor faltó.
+
+- [1.4] ROE, ROIC y márgenes se calculaban con un trimestre suelto pero se
+  comparaban contra umbrales ANUALES: todo el factor Calidad estaba sesgado a la
+  baja para TODOS los tickers (una empresa con ROE anual del 15% puntuaba 0,25
+  en vez de 1,0). Ahora usan TTM. Arreglado también debt_to_ebitda.
+
+- [1.5] Una empresa en PÉRDIDAS salía como la valoración MÁS atractiva de su
+  historia (un PER negativo es el "más bajo" de la serie). Ahora un denominador
+  <= 0 da NaN. El patrimonio neto negativo (BA, MCD, SBUX, HD) deja de
+  censurarse: es un estado contable real.
+
+- [1.6] Se replicaba el precio de IPO hacia atrás para rellenar el histórico de
+  acciones recién cotizadas, fabricando años de retornos 0. Ahora se recorta al
+  primer precio real y el informe avisa del histórico EFECTIVO.
+
+- [1.7] Sin conexión (o con yfinance caído) el programa escupía un traceback y
+  se SALÍA, perdiendo la sesión. Ahora vuelve al menú. También protegido el CSV
+  de IBKR presente pero ilegible.
+
+- [1.8] cache/ml_prob_history.json acumulaba entradas duplicadas de la misma
+  fecha. Ahora hay una por ticker y día, escritas de forma atómica (una
+  interrupción ya no puede llevarse el historial entero). El fichero existente
+  se auto-repara.
+
+- [1.9] EL SHARPE REPORTADO ERA EXACTAMENTE LA MITAD DEL REAL: se calculaba con
+  la deriva ya encogida al 50% hacia la tasa libre de riesgo, pero se imprimía
+  como "histórico" y se leía contra las bandas estándar. OJO: este número
+  saldrá aproximadamente el DOBLE que en informes anteriores; el nuevo es el
+  correcto.
+
+- [1.10] El Sharpe Deflactado salía SIEMPRE 1,0000 por un error de unidades
+  (Sharpe anualizado contra recuento diario, inflado ~16x): el chequeo más
+  sofisticado del sistema no podía ponerse en rojo nunca. Corregido; con los
+  datos de prueba pasa de 1,0000 a 0,9474, que SÍ queda por debajo del umbral
+  del 95%. Se documenta además, en el informe, que el número es OPTIMISTA por
+  construcción (cuenta 3 intentos cuando en realidad se probaron decenas).
+
+- [1.11] La columna "Delta Prob" de la cartera mostraba un deterioro como
+  número POSITIVO ("+20,00%"), que se lee como una mejora. Renombrada a
+  "Caída" y sin el signo forzado.
+
+- [1.12] NUEVO: registro de predicciones (cache/prediction_log.jsonl). Cada
+  corrida añade una línea con todo lo que el sistema afirmó ese día. Es la
+  ÚNICA forma de saber algún día si el sistema acierta, porque compara lo que
+  se dijo ANTES con lo que pasó DESPUÉS. Consultarlo con
+  scripts/revisar_predicciones.py. Cuanto antes empiece a acumular, antes sirve.
+
+- [EXTRA, encontrado al validar el criterio de aceptación] El informe abortaba
+  con UnicodeEncodeError si se REDIRIGE la salida (`python main_pipeline.py >
+  informe.txt`) o se canaliza a otro comando. En Windows, cuando stdout no es
+  una consola, Python usa cp1252, que no sabe codificar los caracteres que el
+  informe imprime de principio a fin (el bloque del banner, el símbolo de
+  advertencia, los separadores). La corrida moría justo al empezar a imprimir,
+  o sea DESPUÉS de haber pagado los walk-forwards de GARCH/ARIMA, el ML, el
+  Monte Carlo y la validación completa: todo el cálculo tirado por la
+  codificación de la terminal.
+  Peor: el manejador de errores que la sub-fase 1.7 añadió al bucle del menú
+  TAMBIÉN imprime el símbolo de advertencia, así que cuando el fallo era de
+  codificación el manejador volvía a fallar y el traceback se escapaba igual,
+  anulando la degradación que se acababa de introducir. Por eso se arregla en la
+  raíz (se fuerza UTF-8 en stdout/stderr al importar el módulo) y no envolviendo
+  prints en try/except.
+  Solo se detectó al ejecutar el punto de entrada REAL (`python
+  main_pipeline.py` con la salida redirigida): llamar a run_production_system
+  desde un test no lo reproduce, porque pytest sustituye stdout por su propio
+  objeto de captura.
+
+PENDIENTES QUE ESTA FASE DEJA ABIERTOS A PROPÓSITO:
+  - El ROIC sigue saliendo absurdo (18.300%) cuando el capital invertido es
+    positivo pero diminúto. La regla del plan era "<= 0 -> NaN" y eso es lo que
+    se hizo; arreglar el caso asintótico exige elegir un umbral de
+    MATERIALIDAD, que es una decisión de modelado nueva. Queda fijado en un
+    test para que el residuo sea visible.
+  - "TTM" y "YoY" cuentan FILAS y no trimestres: con huecos en los datos de
+    EDGAR, una ventana "de 12 meses" puede abarcar 5-7 trimestres reales sin
+    avisar. Documentado en un solo sitio (fundamental_engine._ttm).
+  - Los chequeos de régimen-dependencia y de concluyencia estadística siguen
+    siendo prácticamente inalcanzables con un solo activo, y "no evaluable"
+    sigue contando como "no rojo", así que el veredicto por defecto tiende a
+    ALTA confianza. Es un problema de diseño (ver AUDITORIA_2026-09.md C3 y
+    sección 4), no de implementación: no se toca en la Fase 1.
+  - Los 252 días/año para BTC siguen sin arreglar (primer punto de este
+    fichero).
+
+{{{{{{{{{{{{{{{{{{{{{{ FASE 2 DEL REFACTOR - PUERTA DE DECISION }}}}}}}}}}}}}}}}}}}}}}
+
+Diagnostico multi-horizonte (PLAN_REFACTOR.md 2.1-2.3). Rama:
+fase2-diagnostico. ESTA FASE NO MODIFICO EL SCORE: solo genera evidencia.
+
+QUE SE HIZO
+- Nuevo scripts/diagnostico_multihorizonte.py. Para 10 tickers (AAPL, MSFT,
+  META, AMZN, NVDA, UBER, JD, JNJ, KO, XOM) x 5 horizontes (1, 3, 6, 12, 24
+  meses) = 50 combinaciones: reentrena el ML con el target de cada horizonte,
+  corre el event study, y calcula el Information Coefficient y un error
+  estandar Newey-West (HAC, lag = horizon_days) sobre el exceso senal-control.
+  Salida: output/diagnostico_multihorizonte.csv (50 filas x 36 columnas) mas
+  tabla de detalle, resumen por horizonte y bloque de lectura en consola.
+- 2.3: se anadieron al analisis de sensibilidad las 4 variantes GRATUITAS que
+  antes se omitian (se pagaba solo la cara, el segundo walk-forward GARCH):
+  pesos del score, random_state, buy_threshold y bandas de recomendacion.
+
+RESULTADO: LA SENAL NO AGUANTA EN NINGUN HORIZONTE.
+
+1. Solo 10 de las 49 combinaciones evaluables tienen un IC apoyado en 10 o mas
+   ventanas INDEPENDIENTES, y las 10 son del horizonte de 1 MES. En ese
+   horizonte -el unico con potencia estadistica real- el IC sale:
+       media -0.0093   mediana -0.0022   positivos 5 / negativos 5
+   Es cero. No "pequeno": cero, con el signo repartido a la mitad.
+
+2. EL HORIZONTE DE PRODUCCION (6 MESES) NO ES EVALUABLE PARA NINGUN TICKER.
+   En 0 de los 10 tickers los dos grupos (senal y control) tienen suficientes
+   observaciones independientes para comparar sus medias. El
+   `excess_difference` que el informe imprime en cada corrida como su
+   validacion principal no es estimable en ninguno de los 10 casos probados.
+   Lo mismo a 12 y a 24 meses.
+
+3. Balanced-Accuracy: media 0.5157, mediana 0.5009 sobre las 49 filas. 19 de
+   49 estan POR DEBAJO de 0.50, o sea peor que una moneda al aire. Por
+   horizonte: 0.509 / 0.506 / 0.495 / 0.503 / 0.572 (el 0.572 de 24 meses esta
+   inflado por targets degenerados: AAPL a 24 meses batio al S&P en TODAS las
+   ventanas y el entrenamiento fallo por tener una sola clase).
+
+4. Significancia: de las 11 filas con ambos grupos estimables, 1 sale
+   significativa al 95% con Newey-West. Con 11 tests a alpha=0.05, el azar
+   produce 0.55 falsos positivos de media. Ese 1 es exactamente lo que se
+   espera del ruido.
+
+5. El signo del IC no es estable en ningun ticker a lo largo de los horizontes:
+       AAPL --++     MSFT +---+    META +++-+    AMZN +-+-+   NVDA ---++
+       UBER -+--+    JD   ++++-    JNJ  ----+    KO   +-+++   XOM  ----+
+   Ninguno mantiene el signo. Es la firma del ruido, no de una senal debil.
+
+6. Los IC grandes son artefacto de solapamiento. A 24 meses el IC medio sin
+   filtrar sale +0.364 y parece senal enorme, pero descansa en 0.5 ventanas
+   independientes. El script reporta las dos columnas (filtrada y sin filtrar)
+   justo al lado para que se vea de cuanto es el artefacto.
+
+CONCLUSION SEGUN EL CRITERIO QUE EL PROPIO PLAN FIJO (seccion 2.2):
+  "Si el IC es indistinguible de cero en todos los horizontes, la Fase 3 esta
+   justificada empiricamente y no por opinion."
+  El IC es cero en el unico horizonte con potencia estadistica, y en los demas
+  no es ni siquiera medible. La Fase 3 queda justificada POR LOS DATOS.
+
+  Y algo mas fuerte que lo que el plan anticipaba: no es solo que la senal no
+  aguante fuera de los 6 meses. Es que A LOS 6 MESES NO SE PUEDE MEDIR. El
+  sistema lleva imprimiendo como validacion principal un numero que, para los
+  10 tickers probados, no tiene tamano muestral para existir.
+
+LIMITES DE ESTE DIAGNOSTICO (para no sobreleerlo):
+  - Son 10 tickers, no un universo. No prueba que ninguna senal ML sobre
+    features tecnicas pueda funcionar: prueba que ESTA, con ESTAS 7 features y
+    N=1 activo, no lo hace.
+  - El walk-forward GARCH/ARIMA corrio con refit cada 63 dias (trimestral) y no
+    cada 21 como en produccion, para que 10 tickers fueran viables. Es la misma
+    concesion que ya hace config.portfolio_ts_refit_every y no deberia mover
+    una conclusion tan rotunda, pero conviene saberlo.
+  - El diagnostico no evalua la capa de riesgo (volatilidad, drawdown, beta,
+    bandas de precio), que es lo que la Fase 3 propone CONSERVAR. Nada de lo
+    de arriba dice que esa parte este mal.
+
+{{{{{{{{{{{{{{{{{{{{{ FASE 3.1-3.2 DEL REFACTOR - PARTE ADITIVA }}}}}}}}}}}}}}}}}}}}}
+
+Rama: fase3-reenfoque. SOLO las secciones 3.1 y 3.2 del plan. Es una fase
+puramente ADITIVA: el score, el veredicto y el ML siguen intactos y el informe
+sale exactamente igual que antes (verificado: dos corridas de AAPL dan un
+stdout identico byte a byte, sha256 4ca7c69f...). Los motores nuevos quedan
+disponibles y testeados; cablearlos al informe es la 3.4.
+
+QUE SE ANADIO
+- entry_context_engine.py: distribucion del DRAWDOWN DE ENTRADA y del TIEMPO
+  HASTA RECUPERACION para 1/3/6/12/24 meses, mas el contexto de valoracion
+  point-in-time reetiquetado (sin score ni etiqueta compuesta).
+- main_pipeline.lognormal_price_fan: el abanico lognormal, junto a la funcion
+  de un solo horizonte que generaliza (no la reemplaza).
+- quantile_forecast_engine.QuantileFanForecaster: un motor cuantilico por
+  horizonte, con el embargo de cada split dimensionado a su propio target.
+- El rearrangement de Chernozhukov se aplica ahora TAMBIEN en
+  evaluate_out_of_sample. Antes se validaba un objeto distinto del que se
+  publica: las bandas publicadas venian reordenadas y la cobertura/pinball loss
+  reportados NO.
+  MAGNITUD DEL PROBLEMA, medida: el 32,6% de las filas de test de AAPL (172 de
+  528) tenian los cuantiles CRUZADOS; sobre 3.000 dias sinteticos, el 18%. No
+  es un caso raro: es un tercio de las predicciones validadas.
+  IMPACTO EN LOS NUMEROS IMPRESOS: en AAPL, NINGUNO — las tres coberturas
+  salen identicas a 6 decimales y el informe completo es byte a byte igual que
+  antes del cambio. El motivo es que la cobertura es un estadistico 0/1 por
+  observacion y los cruces son de magnitud pequena: mueven los bordes de la
+  banda tan poco que ninguna observacion cambia de lado. En la serie sintetica
+  si se movio, menos de 1 punto, y el pinball loss agregado mejoro un 0,05%
+  (la direccion que predice la teoria).
+  NO ASUMIR que eso vale para todo ticker: el arreglo es real y necesario
+  —se estaba validando otro objeto— y da la casualidad de que en AAPL no
+  altera las cifras publicadas a la precision a la que se imprimen.
+
+EJEMPLO REAL (AAPL, 3.015 sesiones) — asi se leera el bloque central:
+  DRAWDOWN DE ENTRADA         P5       P25   Mediana   n_indep  fiable
+     1 mes                 -14.3%     -6.7%    -2.8%     142.6    si
+     3 meses                -23.4%    -11.0%    -5.1%      46.9    si
+     6 meses                -27.4%    -15.5%    -6.9%      22.9    si
+    12 meses                -29.0%    -19.8%    -9.7%      11.0    si
+    24 meses                -28.8%    -18.8%   -11.0%       5.0    NO
+  A 6 meses, la entrada mediana llego a ver un -6,9% y el 5% peor un -27,4%.
+  El horizonte de 24 meses sale marcado NO FIABLE con 5 ventanas
+  independientes: es el diseno funcionando, no un fallo.
+
+DECISION REGISTRADA: ANALOGOS CONDICIONALES (3.1c) DESCARTADOS (2026-09)
+  El plan original contemplaba repetir las dos distribuciones restringiendo a
+  fechas historicas cuyo estado se pareciera al de HOY (percentil de
+  volatilidad condicional +/-15 puntos, caida desde maximos +/-10 puntos).
+  NO SE IMPLEMENTA, por decision del propietario.
+  Motivo: con 12 anios y ventanas de 126 dias, el numero de analogos
+  INDEPENDIENTES cae casi siempre por debajo del minimo fiable, y es
+  exactamente la puerta por la que el sobreajuste volveria a entrar — justo
+  despues de haber echado la capa ML por esa misma razon.
+  Las dos distribuciones son INCONDICIONALES, sobre todo el historico
+  disponible. Hay un test (test_no_existe_ninguna_version_condicional_ni_filtro
+  _de_similitud) que FALLA si alguien anade un metodo cuyo nombre sugiera
+  analogos, similitud o condicionamiento, para que reponerlo tenga que ser una
+  decision consciente y no un anadido silencioso.
+
+DEFECTO DE ESPECIFICACION ENCONTRADO Y CORREGIDO
+  El plan define el tiempo de recuperacion como "desde t, primer dia en que
+  P >= P[t]". Tomado literalmente, eso devuelve 1 DIA para cualquier entrada
+  cuyo precio suba al dia siguiente — AUNQUE despues se hunda un 30% y tarde
+  dos anios en volver. En un activo alcista da 1 dia en casi todas las fechas y
+  la mediana no informa de nada. Lo destaparon los propios tests de la
+  sub-fase (dos fallaron con la definicion literal).
+  Definicion implementada: dias desde la compra hasta volver al precio pagado
+  DESPUES de haberse hundido, restringido a las entradas que si se hundieron
+  (en las demas no hay nada que recuperar, y meterlas con un 0 arrastraria la
+  mediana a 0). Se reporta aparte pct_nunca_bajo_agua.
+  OJO: esa restriccion NO es un filtro de similitud de los que 3.1c descarta.
+  Ahi el problema era condicionar en el ESTADO DE HOY, que selecciona fechas
+  por parecerse al presente. Aqui se condiciona en que la metrica este
+  DEFINIDA, es una condicion sobre el propio suceso, y no mira el presente.
+
+PENDIENTE PARA 3.5-3.6 -> CERRADO (ver el bloque FASE 3.5 y 3.6 al final)
+
+
+================================================================================
+FASE 3.3 y 3.4 — SE ELIMINA LA CAPA NO VALIDADA Y SE RECONSTRUYE EL INFORME
+================================================================================
+
+EXCEPCION EXPLICITA A LA REGLA DE "SOLO ANADIR" (autorizada el 2026-09-10)
+  Regla permanente del propietario, vigente desde el principio de este fichero:
+  "NO QUITE NADA DEL OUTPUT (SOLO ANADIR) A NO SER QUE LO PIDA YO
+  EXPLICITAMENTE".
+  ESTA FASE ES LA EXCEPCION, y esta autorizada explicitamente por el
+  propietario (PLAN_REFACTOR.md, Fase 3, "Decisiones del propietario para esta
+  fase", punto 1). La regla general SIGUE VIGENTE para todo lo demas.
+
+  QUE SE HA QUITADO DEL INFORME, exactamente:
+    - El Score Multifactorial 0-100.
+    - El veredicto COMPRA FUERTE / COMPRA / MANTENER / EVITAR (y NO EVALUABLE).
+    - La probabilidad ML y su chequeo de calibracion (Brier, curva de
+      fiabilidad).
+    - Los dos backtests como secciones del informe (event study de holding
+      period y rebalanceo diario).
+    - ValidationEngine entero: sub-periodos, Sharpe Deflactado, analisis de
+      sensibilidad y el veredicto ALTA/MEDIA/BAJA.
+    - En el modo cartera [2]: las columnas Prob.ML, Bal.Acc y Caida, el
+      veredicto MANTENER/VIGILAR/VENDER, y la etiqueta SIN SENAL.
+    - El grafico de curva de equity (dibujaba el rebalanceo diario, o sea la
+      senal que salio de la ruta de decision).
+    - El bloque "RESUMEN EJECUTIVO" (sus seis cifras eran score, veredicto,
+      probabilidad ML, hit rate del backtest y robustez).
+
+  POR QUE, con los numeros: la Fase 2 midio el poder predictivo de esa capa con
+  la vara del propio sistema (ventanas INDEPENDIENTES, no fechas solapadas). De
+  49 celdas evaluables, solo 10 tienen un Information Coefficient con muestra
+  suficiente, y las diez estan en el horizonte de 1 mes: ahi sale -0,0093 de
+  media, -0,002 de mediana, y el signo repartido 5-5. Al horizonte de
+  PRODUCCION (6 meses) NINGUNO de los 10 tickers tiene los dos grupos del event
+  study estimables — es decir, el "exceso senal-control" que el informe
+  imprimia cada corrida como su validacion principal no tenia tamano muestral
+  para existir en ninguno de ellos. Balanced-Accuracy media 0,5157, con 19 de
+  49 celdas por debajo de 0,50. 1 de 11 excesos estimables era significativo al
+  95%, donde el azar solo ya da 0,55.
+  Un promedio ponderado de cinco factores cuyo componente predictivo mide cero
+  no deja de medir cero por promediarse: solo se vuelve mas dificil de auditar,
+  porque una etiqueta ("COMPRA") esconde de que medicion salio y con cuantas
+  observaciones.
+
+  NO SE HA SUSTITUIDO POR OTRA ETIQUETA, y esto es deliberado: ni
+  "atractivo/neutro/caro", ni semaforos, ni estrellas, ni un score renombrado.
+  Cualquier resumen categorico de varias dimensiones en una palabra
+  reintroduciria por la puerta de atras exactamente lo que la fase elimina. El
+  informe DESCRIBE; no dictamina.
+
+  A UN AGENTE FUTURO: si lees un CLAUDE.md o un README que describe el score y
+  no lo encuentras en el codigo, NO lo repongas. Se fue por los datos de
+  arriba, con autorizacion, y hay tres guardas que lo dicen:
+    - tests/test_pipeline_smoke.py::test_el_informe_no_reintroduce_ningun_score
+      _ni_veredicto (falla si reaparece en el informe).
+    - tests/test_fundamental_engine.py::test_describe_quality_no_produce_ningun
+      _score_compuesto.
+    - tests/test_portfolio_cli.py (falla si reaparecen las columnas Prob.ML,
+      Bal.Acc, Caida o Veredicto).
+
+QUE CODIGO SE CONSERVA (decision del propietario, punto 2 de la fase)
+  ml_engine.py, validation_engine.py y scripts/diagnostico_multihorizonte.py
+  SIGUEN EN EL REPO, con sus tests intactos. Solo salen de la ruta de decision.
+  Motivo: el walk-forward, la purga, el embargo, el Information Coefficient y
+  el error estandar Newey-West son lo mejor construido del repo y son la
+  condicion de entrada de la Fase 6 (panel transversal). Si algun dia se quiere
+  reintroducir un score, se mide con esa maquinaria primero.
+  De validation_engine.py SI se borraron `run_sensitivity_analysis` (con todos
+  sus `sensitivity_*`) y `generate_robustness_verdict`: el primero medida cuanto
+  se movia el SCORE al variar una decision de modelado, y sin score no hay nada
+  que mover; el segundo comprimia tres chequeos en una etiqueta ALTA/MEDIA/BAJA,
+  que es justo el tipo de resumen categorico que la fase elimina.
+  De scoring_backtest_engine.py se borro todo el score
+  (calculate_multifactor_score, generate_recommendation, calculate_risk_factor,
+  calibrate/load_recommendation_bands, DEFAULT_FACTOR_WEIGHTS,
+  DEFAULT_RECOMMENDATION_BANDS, NO_EVALUABLE_TAG) y se conservaron los dos
+  backtests, que ValidationEngine y el diagnostico siguen consumiendo.
+  De fundamental_engine.py se borraron `score_quality`, `score_valuation`,
+  `_absolute_level_score` y QUALITY_ABSOLUTE_THRESHOLDS. La mezcla
+  percentil+nivel absoluto existia SOLO para alimentar el score; la ficha nueva
+  imprime el valor Y el percentil por separado, que es lo que hace innecesaria
+  el ancla absoluta.
+  De config.py se borraron los weight_*, factor_weights, __post_init__ (solo
+  validaba la suma de los pesos), recommendation_bands_path y los
+  hold_threshold_*.
+
+QUE HAY AHORA EN EL INFORME (estructura 3.4)
+  FICHA DE ENTRADA — {TICKER} — {fecha}, y cinco bloques:
+   1. PRECIO Y VALORACION: precio, rango de 12 meses, historico efectivo, y los
+      cinco multiplos point-in-time con su PERCENTIL dentro del historico de la
+      propia empresa, su mediana historica y su n. Percentil en orientacion
+      NATURAL (alto = caro), sin la inversion `1.0 - rank` del score viejo.
+   2. PERFIL DE RIESGO: volatilidad condicional GARCH de hoy Y su percentil
+      historico (el nivel solo no dice si el activo esta agitado PARA EL),
+      volatilidad esperada al horizonte, volatilidad anualizada vs. benchmark y
+      relativa, beta rolling 252d, maximo drawdown, VaR 95%, Expected
+      Shortfall, Sharpe, Sortino, y el Monte Carlo con sus dos supuestos
+      (deriva y sigma) impresos al lado.
+   3. A QUE TE APUNTAS  <-- el bloque central, y el unico que se imprime con
+      --no-verbose. Tres tablas por horizonte (1/3/6/12/24 meses):
+        (a) drawdown de entrada, percentiles P5/P25/P50/P75/P95;
+        (b) tiempo hasta recuperacion, con % que no recupera y % que nunca
+            estuvo bajo agua;
+        (c) bandas de precio 80/90/95% en abanico, por las dos rutas
+            (lognormal clasica y cuantilica), con la cobertura empirica fuera
+            de muestra de la cuantilica al lado.
+      CADA FILA lleva su n, su n INDEPENDIENTE (n/horizonte) y un flag
+      fiable si/NO. En la misma fila, no en una nota al pie: una nota se lee
+      despues de haberse creido el numero.
+   4. SALUD FINANCIERA (descriptivo, sin puntuar): ROE y ROIC TTM, margen
+      operativo y neto, deuda/equity, deuda/EBITDA, cobertura de intereses y
+      los tres crecimientos YoY. Por metrica: valor, percentil propio, mediana
+      historica, variacion frente al MISMO trimestre del ano anterior, y n.
+   5. ADVERTENCIAS: lista de lo que NO se sostiene, cada entrada nombrando su
+      causa y su cifra. Se imprime en los DOS modos de verbosidad.
+
+  DESVIACION DELIBERADA DE LA LETRA DEL PLAN: el plan dice que
+  `config.verbose=False` imprime "solo el bloque A QUE TE APUNTAS". Se imprime
+  ese bloque Y las ADVERTENCIAS. Motivo: el informe nuevo no tiene ningun
+  veredicto que diga cuanto fiarse de lo que se acaba de leer, asi que una
+  lista de advertencias que desaparece al cambiar un flag de verbosidad seria
+  exactamente el "enterrar el reparo" que esta fase combate. El flag sigue
+  controlando cuanto se imprime, nunca que se calcula.
+
+  LO QUE NO SE HA QUITADO, aunque el esquema de 3.4 no lo listaba: el Monte
+  Carlo, el VaR, el Expected Shortfall, el Sharpe y el Sortino siguen en el
+  PERFIL DE RIESGO. La autorizacion para quitar cubre el score, el veredicto,
+  la probabilidad ML, los backtests y ValidationEngine — nada mas —, y para
+  todo lo demas la regla de "solo anadir" sigue vigente. El Monte Carlo se
+  presenta ahora con sus dos supuestos a la vista y una linea que dice que es
+  una simulacion bajo GBM, no una medicion.
+
+MODO CARTERA [2]: CONTEXTO, SIN VEREDICTO
+  Columnas: Ticker | Cant. | P.Medio | P.Actual | P&L | Val. | Vol.ann | Vol. |
+  Beta | DD med | Revisar.
+    Val.    = percentil point-in-time del multiplo de valoracion.
+    Vol.    = percentil de la volatilidad condicional GARCH de hoy.
+    DD med  = drawdown de entrada MEDIANO al horizonte configurado.
+  El percentil de valoracion usa el PRIMER multiplo con dato del orden
+  PER -> EV/EBITDA -> P/S -> P/B, y dice cual uso. NO promedia varios: un
+  promedio de percentiles vuelve a ser un numero compuesto que esconde de que
+  salio. (El PER es NaN en una empresa en perdidas, el EV/EBITDA con EBITDA
+  negativo; de ahi el orden.)
+  "REVISAR" —no "vender"— se marca cuando algo cambio de forma MATERIAL frente
+  al PRIMER registro de esa posicion, con tres disparadores independientes y
+  sus umbrales en config.py:
+    - review_threshold_valuation_percentile_jump (0.40): el percentil de
+      valoracion se movio mas de 40 puntos. En VALOR ABSOLUTO: que se haya
+      vuelto mucho mas barata tambien es un cambio material; el sistema no
+      decide en que direccion es "malo".
+    - review_threshold_vol_percentile_jump (0.40): idem con el percentil de
+      volatilidad. Es la operacionalizacion de "cambio de regimen"; un umbral
+      absoluto de volatilidad marcaria siempre a los mismos activos por ser lo
+      que son, no por haber cambiado.
+    - review_margin_declining_quarters (2): el margen neto TTM lleva N
+      trimestres consecutivos cayendo. Este NO necesita historico del registro,
+      asi que es el unico evaluable en la primera corrida de una posicion.
+  Cada disparador vale None (NO EVALUABLE) y nunca False cuando no hay
+  registro previo o el percentil no se pudo calcular, y un None nunca marca:
+  ausencia de historico no es evidencia de que nada haya cambiado, ni de que
+  algo haya cambiado.
+  REVISAR SIGNIFICA "MIRALO TU", no una orden. La explicacion dice QUE cambio y
+  cuanto, nunca que hacer.
+  cache/ml_prob_history.json DEJA DE ESCRIBIRSE (nada llama ya a
+  record_ml_prob). EL FICHERO NO SE BORRA: es historico, describe que afirmaba
+  el sistema en cada fecha, y get_earliest_ml_prob sigue pudiendo leerlo. El
+  historico que si se alimenta ahora es cache/context_history.json
+  (config.context_history_path), con el percentil de valoracion y el de
+  volatilidad por ticker y fecha, mismo upsert-por-fecha y misma escritura
+  atomica de la Fase 1.8.
+
+REGISTRO DE PREDICCIONES: ESQUEMA ADITIVO, NO RENOMBRADO
+  prediction_log.jsonl se sigue escribiendo en cada corrida y en los dos modos.
+  Las entradas nuevas NO traen score, recomendacion, factores, ml ni robustez —
+  se dejaron de EMITIR, no se renombraron ni se reutilizaron con otro
+  significado — y traen claves nuevas: valoracion_contexto, salud_financiera,
+  vol_condicional, drawdown_entrada, tiempo_recuperacion, abanico_lognormal,
+  abanico_cuantilico (+ sus omitidos y su validacion) y advertencias. Se
+  conservan con su significado exacto precio_actual, fiabilidad,
+  proyeccion_inputs, monte_carlo, riesgo e historico_efectivo_*, para que el
+  historico siga comparable.
+  scripts/revisar_predicciones.py entiende LAS DOS FORMAS: la banda del 90% se
+  busca primero en bandas_opcion_b/a (entradas viejas) y luego en
+  abanico_cuantilico/lognormal por horizonte (entradas nuevas), y la ausencia
+  de recomendacion ya no se presenta como una carencia sino como lo que es —
+  el sistema dejo de afirmar una direccion. Lo que si se puede seguir
+  comprobando es si el precio de hoy cayo DENTRO de la banda proyectada
+  entonces, que es una afirmacion de calibracion y no de direccion.
+
+TESTS: 372 -> ver el recuento al cierre de la fase
+  Decision consciente por cada test roto, siguiendo la regla del plan (no
+  debilitar la asercion para que pase):
+  BORRADOS, porque lo que verificaban dejo de existir:
+    - tests/test_score_no_evaluable.py (fichero entero): generate_recommendation
+      y _factores_no_evaluables. SU INVARIANTE —"un numero que falta no es una
+      medicion"— se conserva y se verifica en su forma nueva en
+      tests/test_informe_ficha_entrada.py (NaN -> 'n/d', fiable None -> 'n/d' y
+      no 'NO', percentil 0 distinguible de percentil ausente).
+    - Los 15 tests del score en test_scoring_backtest_engine.py
+      (calculate_multifactor_score, generate_recommendation, las bandas,
+      calculate_risk_factor).
+    - Las secciones 3 (Sensibilidad) y 4 (Veredicto) de
+      test_validation_engine.py, y el test del veredicto que vivia en la
+      seccion 1.
+    - Los tests de la mezcla percentil+nivel absoluto y de umbrales
+      personalizados en test_fundamental_engine.py.
+    - Los 6 tests de generate_hold_sell_signal y los 3 de "SIN SENAL" en
+      test_portfolio_engine.py.
+  ADAPTADOS, porque lo que verificaban SIGUE existiendo en otra forma:
+    - test_pipeline_smoke.py: reescrito. Ya no busca la linea del SCORE ni el
+      VEREDICTO; afirma los cinco bloques, que cada distribucion lleva su n y
+      su n independiente, que --no-verbose imprime solo el bloque central y las
+      advertencias, y —guarda de regresion— que NO reaparece ningun score,
+      veredicto ni probabilidad ML.
+    - test_portfolio_cli.py: reescrito para las columnas de contexto y la marca
+      REVISAR. Se conservan palabra por palabra las asercones de lo que no
+      cambio: que el P&L viene del CSV sin recalcularse, que P.Medio es
+      contexto, y que se advierten las implicaciones fiscales.
+    - test_coherencia_proyecciones.py: el invariante de la Fase 1.1 (Monte
+      Carlo y proyeccion clasica comparten mu y sigma) se verifica MEJOR que
+      antes, porque lognormal_price_fan recibe las dos en escala natural
+      (anual y diaria) y la comparacion es una igualdad directa que no depende
+      del horizonte. Se comprueba tambien que el escalado al horizonte de
+      produccion sigue siendo el correcto, y que el abanico cubre los cinco
+      horizontes.
+    - test_fundamental_engine.py: score_quality/score_valuation ->
+      describe_quality/valuation_context. Los dos tests de anualizacion del
+      ROE (Fase 1.4) se apoyaban en _absolute_level_score y ahora miden el
+      factor 4 directamente sobre el ratio, que es donde vivia el bug.
+    - test_prediction_log.py y test_reproducibilidad.py: mismas propiedades
+      sobre las claves y los numeros nuevos.
+    - test_denominadores_degenerados.py: el caso de la empresa en perdidas
+      ahora afirma algo MAS fuerte que antes — que el PER no esta ni definido
+      (n_obs == 0), en vez de que el score compuesto no llegue a 0,95.
+    - test_visualization_engine.py: se anade el caso sin df_bt (dos graficos en
+      vez de tres) y se conserva el caso con df_bt.
+  CONSERVADOS INTACTOS, por instruccion explicita: todo test_ml_engine.py y
+  todo el walk-forward (secciones 1 y 2 de test_validation_engine.py, incluido
+  el event study por sub-periodos y la matematica del Sharpe Deflactado).
+  NUEVOS: tests/test_informe_ficha_entrada.py (20 tests de la capa de
+  presentacion: 'n/d', tres estados del flag de fiabilidad, unidades, y que
+  cada tabla imprime su n) y los de generate_review_flags,
+  contar_trimestres_cayendo y record_context/get_earliest_context en
+  test_portfolio_engine.py.
+
+
+================================================================================
+FASE 3.5 y 3.6 — DEUDA DOCUMENTAL Y LOS TRES RESIDUOS DE LA FASE 1
+================================================================================
+
+--------------------------------------------------------------------------------
+3.5 — DEUDA DOCUMENTAL
+--------------------------------------------------------------------------------
+
+EXCEPCION A LA REGLA DE "SOLO ANADIR": ANOTADA CON FECHA Y MOTIVO
+  La regla permanente del propietario, vigente desde el primer punto de este
+  fichero, es: "NO QUITE NADA DEL OUTPUT (SOLO ANADIR) A NO SER QUE LO PIDA YO
+  EXPLICITAMENTE".
+  QUEDA CONSTANCIA FORMAL de que la Fase 3.3/3.4 es la UNICA excepcion
+  autorizada hasta la fecha:
+      Fecha de autorizacion: 2026-09-10
+      Autoriza:              el propietario del repo, de forma explicita
+      Alcance EXACTO:        el Score 0-100, el veredicto
+                             COMPRA/MANTENER/EVITAR, la probabilidad ML y su
+                             calibracion, los dos backtests como secciones del
+                             informe, ValidationEngine entero, el veredicto de
+                             robustez ALTA/MEDIA/BAJA, el veredicto
+                             MANTENER/VIGILAR/VENDER del modo cartera con sus
+                             columnas (Prob.ML, Bal.Acc, Caida), el bloque
+                             RESUMEN EJECUTIVO, y el grafico de curva de equity.
+      Motivo:                la Fase 2 midio el poder predictivo de esa capa con
+                             la vara del propio sistema (ventanas
+                             INDEPENDIENTES) y no lo hay: IC medio -0,0093 con
+                             el signo repartido 5-5 en el unico horizonte con
+                             potencia estadistica, y los dos grupos del event
+                             study no estimables al horizonte de produccion en
+                             ninguno de los 10 tickers. Detalle completo en el
+                             bloque FASE 3.3 y 3.4 de este fichero.
+      NO autoriza:           nada mas. Para TODO lo demas la regla de "solo
+                             anadir" sigue vigente. En particular NO se
+                             eliminaron el Monte Carlo, el VaR, el Expected
+                             Shortfall, el Sharpe ni el Sortino, que siguen en
+                             el PERFIL DE RIESGO.
+      Reversion:             tres tests fallan si el score o el veredicto
+                             vuelven al informe (ver el bloque FASE 3.3/3.4).
+
+CLAUDE.md REESCRITO DE CERO
+  Describia en detalle un sistema que la 3.3/3.4 destruyo: el score, sus pesos,
+  las bandas de recomendacion, el peso del ML, el Resumen Ejecutivo, los dos
+  backtests como secciones, ValidationEngine con sus tres chequeos. Un CLAUDE.md
+  desactualizado es PEOR que no tenerlo: hace que cualquier agente futuro
+  trabaje sobre una descripcion falsa y "arregle" cosas que estan bien.
+  Lo nuevo (679 lineas):
+    - Arranca diciendo que el sistema DESCRIBE y no dictamina.
+    - Seccion propia "The Phase 3 removal — read this before restoring
+      anything": qué se borro, POR QUE con los numeros de la Fase 2, que NO se
+      sustituyo por otra etiqueta, y los tres tests guarda que fallan si vuelve.
+    - Arquitectura reordenada al pipeline REAL de 12 puntos (antes eran 16 y la
+      mitad ya no existian), con EntryContextEngine como motor central.
+    - Nueva seccion "The report, block by block" con los cinco bloques.
+    - Invariantes reescritos: se fueron los del score y la redistribucion de
+      pesos; entraron "no score, no verdict, no categorical label", "every
+      number travels with its sample size", "a ratio whose denominator is a
+      difference of large numbers needs a materiality floor, not a cap",
+      "windows that count rows are not windows that cover time" y
+      "annualization comes from config.trading_days_per_year; factor shape does
+      not".
+    - "Known open issues" actualizado a los que hay DE VERDAD hoy.
+
+README.txt REESCRITO DE CERO (901 -> 707 lineas)
+  Documentaba las 11 secciones del informe viejo. Ahora documenta las 5 del
+  nuevo, con el rango de interpretacion de CADA metrica que se imprime, que es
+  el requisito permanente del propietario.
+  Lo que se CONSERVA de la version anterior son los rangos de las metricas que
+  sobreviven (volatilidad >40%/<20%, beta 1,3/1,0/0,7, Sharpe >=2/1-2/0,5-1/<0,5,
+  drawdown 0/-15/-25/-50, cobertura empirica +/-15 pts, VaR vs. ES).
+  Lo que se ANADE, con su rango:
+    - una seccion "COMO LEER CUALQUIER NUMERO DE ESTE INFORME" al principio,
+      con las tres convenciones que se repiten en todas las secciones (n vs.
+      n indep., los tres estados del flag fiable, y los percentiles en
+      orientacion natural). Sin eso el resto se malinterpreta.
+    - drawdown de entrada: como leer mediana / P25 / P5 / P95, y la regla
+      practica de si se aguantaria el P25 sin vender.
+    - tiempo hasta recuperacion: por que "% no recupera" suele ser la cifra
+      mas importante del bloque, y por que solo cuenta las entradas que se
+      hundieron.
+    - percentiles de valoracion: p0-p25 barato / p25-p75 habitual / p75-p100
+      caro, y la advertencia de que un percentil alto NO es una senal de venta.
+    - salud financiera: rangos de ROE, ROIC, margen neto, Deuda/Equity,
+      Deuda/EBITDA y cobertura de intereses.
+    - la columna VENTANA, con la magnitud medida del problema.
+    - el umbral de materialidad del ROIC, explicado en terminos de por que un
+      denominador diminuto no da un ratio alto sino uno no estimable.
+    - "REVISAR" del modo cartera: los tres disparadores, sus umbrales y por que
+      significa "miralo tu" y no una orden.
+    - --trading-days-per-year: que ajusta y que NO ajusta a proposito.
+    - la lista de flags de CLI que mas cambian lo que se imprime.
+
+--------------------------------------------------------------------------------
+3.6a — UMBRAL DE MATERIALIDAD DEL ROIC  (decision de modelado nueva)
+--------------------------------------------------------------------------------
+
+EL RESIDUO. La Fase 1.5 aplico la regla del plan ("capital invertido <= 0 ->
+NaN") y eso arreglo el caso net-cash con el denominador negativo. Pero el ROIC
+es ASINTOTICO en cero: un capital invertido positivo pero DIMINUTO seguia
+produciendo un ROIC del 18.300%, igual de inutil que el infinito que se acababa
+de eliminar. Quedo fijado en un test para que el residuo fuera visible.
+
+LA DECISION: capital_invertido < 10% de (deuda + equity) -> ROIC = NaN.
+  Propuesta y aprobada por el propietario el 2026-09-10. Vive en
+  config.roic_min_invested_capital_fraction y llega al motor por constructor.
+
+POR QUE ESE CRITERIO Y NO OTRO. El fallo es ARITMETICO, no economico:
+`capital_invertido = deuda + equity - caja` es una RESTA DE NUMEROS GRANDES.
+Cuando lo que sobrevive a la resta es una fraccion pequena de sus propios
+inputs, su error relativo se amplifica por caja/invertido = (1-frac)/frac:
+      frac 20%  ->  un error del 1% en la caja es un  4% de error en el ROIC
+      frac 10%  ->                                    9%      <-- umbral
+      frac  5%  ->                                   19%
+      frac  1%  ->                                   99%      <-- ruido puro
+Un 1% de error en la cifra de caja es lo normal: una reclasificacion entre
+"efectivo" e "inversiones a corto", o una diferencia de timing a cierre de
+trimestre. Con el capital invertido al 1% del bruto, el ROIC no es alto: no es
+estimable.
+
+POR QUE EL 10% EXACTAMENTE. Se deriva, no se elige a dedo: exigir que un error
+del 1% en la caja no supere un 10% de error en el ROIC da frac >= 1/11 = 9,1%,
+que se redondea a 10%.
+
+POR QUE ESTE CRITERIO Y NO EL OTRO QUE SUGERIA EL PLAN. La alternativa era
+"capital invertido < 1% de los ingresos TTM". Se descarto porque anularia de
+paso a las empresas ASSET-LIGHT, cuya baja intensidad de capital es un hecho
+economico REAL y no un artefacto aritmetico: mezcla los dos casos sin
+distinguirlos. Ademas compara un stock con un flujo, asi que el umbral
+significaria cosas distintas segun la intensidad de capital del sector.
+(Tampoco se pudo usar "1% del activo total": total_assets NO esta en el esquema
+de fundamentales que extrae data_engine.)
+
+POR QUE NaN Y NO UN TECHO. Recortar el ROIC a, digamos, 3,0 lo dejaria
+leyendose como una medicion ("ROIC del 300%"), y no lo es. El invariante del
+repo es que un numero que no se puede medir se declara ausente.
+
+COSTE MEDIDO: CERO. Sobre 8 tickers (AAPL, MSFT, META, AMZN, NVDA, JNJ, KO,
+XOM) y 182 trimestres con ROIC definido:
+  - el minimo real de invertido/(deuda+equity) es del 22,75% (NVDA, 2020-05),
+    o sea 2,3 veces el umbral;
+  - el ROIC maximo real es 0,905 (90,5%), perfectamente plausible;
+  - el umbral no anula NI UNA observacion real. Verificado antes y despues del
+    cambio: mismos n de ROIC definido por ticker (39/31/14/30/29/5/34), mismos
+    minimos, mismos maximos.
+El umbral dispara SOLO en el regimen patologico, que es lo que un umbral de
+materialidad debe hacer.
+
+LIMITE CONOCIDO, dicho sin adornos: sobre el fixture sintetico
+`fundamentals_net_cash`, que cruza el cero a proposito, el umbral anula los
+trimestres con ROIC del 3.190% y del 18.290% pero deja pasar uno del 1.750%.
+Ese fixture esta construido con un NOPAT/capital que ninguna empresa real
+tiene, asi que el residuo es de la fixture y no del umbral. Subir el umbral al
+20% bajaria ese maximo a 750%, pero dejaria el margen sobre el dato real mas
+ajustado (NVDA, 22,75%) en 3 puntos en vez de 13, y anularia observaciones
+economicamente reales de un futuro ticker net-cash. Se prefiere el 10%.
+
+TEST QUE CAMBIA: `test_capital_invertido_positivo_pero_casi_cero_sigue_dando_
+roic_enorme` fijaba el comportamiento ANTERIOR y su propio docstring decia
+"cuando se decida el umbral, este test debe cambiar junto con esa decision".
+Se reescribio como `test_capital_invertido_casi_cero_ya_no_da_un_roic_absurdo`
+(ahora afirma NaN) y se anadieron tres mas: que anula exactamente los
+trimestres inmateriales, que el umbral es configurable (con 0.0 se recupera el
+comportamiento de la Fase 1.5, ROIC absurdo incluido), y que una empresa normal
+no se toca.
+
+--------------------------------------------------------------------------------
+3.6b — VENTANAS TTM / YoY QUE NO CUBREN 12 MESES
+--------------------------------------------------------------------------------
+
+EL RESIDUO. `_ttm` usa `.rolling(4).sum()` y el crecimiento usa
+`.pct_change(4)`: las dos cuentan FILAS, no trimestres. Con los huecos de
+EDGAR (trimestres que el extractor no pudo derivar y descarta), una ventana "de
+12 meses" puede abarcar bastante mas tiempo real, y lo hacia sin avisar.
+
+LA MAGNITUD, MEDIDA POR PRIMERA VEZ. Es MUCHO peor de lo que la nota de la
+Fase 1 sugeria ("puede abarcar 5-7 trimestres"). Sobre 7 tickers y 282
+trimestres reales de EDGAR:
+  - el 69% de las ventanas TTM (181 de 261) NO cubren 365 +/- 45 dias;
+  - el 78% de las YoY (198 de 254) tampoco;
+  - la cobertura MEDIANA de una ventana TTM es de 455 dias. O sea: el "TTM"
+    tipico de este sistema es en realidad un acumulado de ~15 meses;
+  - la media es de 554 dias y el peor caso de 1.554 (AMZN);
+  - la separacion entre filas consecutivas tiene mediana 92 dias (correcta)
+    pero percentil 75 de 182: uno de cada cuatro pares consecutivos esta a dos
+    trimestres o mas. El peor hueco es de 1.099 dias.
+  - por ticker (ventanas TTM fuera de tolerancia / total):
+      AAPL 36/48   AMZN 25/36   JNJ 23/26   KO 28/45
+      META  9/51   MSFT 29/36   NVDA 31/40
+    META es el unico sano de la muestra (mediana 365).
+
+CONSECUENCIA PRACTICA, y no es menor: los ROE, ROIC y margenes "TTM" que el
+informe imprime son, para la mayoria de los tickers, acumulados de mas de 12
+meses. Comparados contra los umbrales ANUALES de la literatura que documenta
+README.txt, salen sesgados AL ALZA. Y el PERCENTIL de esas metricas compara
+ventanas de duraciones distintas entre si.
+
+QUE SE HACE. Detectar, medir y PUBLICAR:
+  - `cobertura_ventana_ttm(index)`: dias que cubre de verdad la ventana de 4
+    filas que termina en cada fila = lapso entre la fila t-3 y la t, mas un
+    trimestre (4 filas separadas ~91 dias abarcan 273 de lapso pero cubren 4
+    trimestres de actividad, o sea 365).
+  - `cobertura_ventana_yoy(index)`: lapso entre la fila t y la t-4. Aca NO se
+    suma un trimestre: se comparan dos instantes, no se acumula un periodo.
+  - `ventana_cubre_un_anio(cobertura, tolerancia)`: 365 +/- 45 dias (la
+    tolerancia que propone el plan). NaN del burn-in -> False, nunca "valida".
+  - `FundamentalFactorEngine.window_coverage()` -> dias_ttm, ttm_valida,
+    dias_yoy, yoy_valida por trimestre.
+  - `describe_quality()` publica, POR METRICA: de que tipo de ventana depende
+    ("ttm"/"yoy"/"stock"), cuantos dias cubre la del valor de HOY, si es valida,
+    y cuantas de sus observaciones descansan en una ventana valida. Y un
+    resumen agregado con la mediana y el peor caso.
+  - EL INFORME: columna VENTANA en la ficha de salud financiera con los DIAS
+    (no un si/no: "455d!" dice de inmediato que ese TTM es de 15 meses, y un
+    booleano no dice cuanto), "—" para las metricas de balance, una nota al pie
+    con el agregado, y dos advertencias — una si mas de la mitad del historico
+    esta fuera de tolerancia, y otra si el valor de HOY lo esta.
+  - MODO CARTERA: `contar_trimestres_cayendo` acepta una mascara de ventanas
+    validas y descarta las invalidas ANTES de contar. Una "caida del margen
+    TTM" entre una ventana de 12 meses y otra de 18 no es un deterioro del
+    negocio, es un cambio de la ventana — y disparar "REVISAR" por eso seria
+    avisar de un hueco de EDGAR como si fuera un hecho de la empresa.
+
+QUE NO SE HACE, y por que: no se reindexa a trimestres fiscales. El plan lo
+deja explicitamente como opcional ("arreglarlo del todo es opcional; ocultarlo
+no lo es") y seria reescribir el extractor de EDGAR entero. Queda como el
+residuo abierto mas gordo del sistema, ahora con su tamano medido.
+
+--------------------------------------------------------------------------------
+3.6c — trading_days_per_year (el primer punto abierto del fichero)
+--------------------------------------------------------------------------------
+
+EL RESIDUO. Primer punto de este fichero, abierto desde el principio del
+proyecto: "Calcula BTC a 252 dias al año pero BTC opera todos los días".
+El 252 estaba como LITERAL repetido en 20 sitios.
+
+LAS DOS CONSECUENCIAS CONCRETAS en un activo que cotiza los 365 dias:
+  - la volatilidad anualizada sale SUBESTIMADA por un factor
+    sqrt(365/252) = 1,204, y con ella el Sharpe, el Sortino, la sigma del Monte
+    Carlo y TODAS las bandas de precio;
+  - un "horizonte de 6 meses" son 126 sesiones tanto para una accion —donde si
+    son 6 meses— como para cripto, donde son cuatro.
+
+QUE SE HIZO. Campo nuevo `config.trading_days_per_year` (252 por defecto), con
+`trading_days_per_month` y `horizon_days` DERIVADOS de el (no campos aparte,
+para que no puedan quedar desalineados). Con 252 da exactamente 21,0 y 126, o
+sea que el informe de una accion no cambia ni un decimal.
+Enhebrado por todo lo que es una CONVERSION DE UNIDADES:
+  - DataEngine: historico efectivo en anos, y el horizonte de
+    calculate_forward_returns.
+  - RiskSimulationEngine: los CINCO sitios (deriva anualizada, sigma
+    anualizada, dt del GBM, y la vol total y a la baja de Sharpe/Sortino).
+  - TechnicalFactorEngine: la volatilidad anualizada y la ventana de la beta
+    rolling, que es una ventana de UN ANO y no de "252 dias".
+  - BacktestAndScoringEngine: el factor de anualizacion y la sigma del Sharpe.
+  - ValidationEngine: la conversion Sharpe anual <-> diario del DSR (que es el
+    mismo error de unidades de la Fase 1.10, desplazado a otros calendarios).
+  - EntryContextEngine y los dos abanicos: los horizontes en dias.
+  - main_pipeline: el rango "de los ultimos 12 meses".
+  - scripts/diagnostico_multihorizonte.py y revisar_predicciones.py (este
+    ultimo lo lee del snapshot de config de cada entrada del log, porque el
+    fichero puede mezclar corridas de activos con calendarios distintos).
+
+QUE NO SE ENHEBRA, A PROPOSITO: las ventanas de FORMA de la metodologia — los
+21/252 dias del momentum academico "12-1" y el burn-in de 252 observaciones del
+GARCH/ARIMA. Esas definen un factor de la literatura con esas ventanas
+concretas; cambiarlas no seria adaptar el calendario sino REDEFINIR el factor.
+Es una limitacion REAL: con 365, el "momentum 12-1" de un activo de cripto
+sigue contando 252 sesiones, o sea 8 meses de calendario. Se documenta en
+config.PipelineConfig.trading_days_per_year, en README.txt y en CLAUDE.md, y
+hay un test (`test_las_ventanas_de_forma_del_momentum_siguen_siendo_literales`)
+que FALLA si alguien lo enhebra, para que reponerlo tenga que ser una decision
+consciente y no un anadido silencioso.
+La deteccion automatica de cripto queda fuera por decision del plan: el flag es
+explicito (`--trading-days-per-year 365`).
+
+--------------------------------------------------------------------------------
+TESTS NUEVOS DE LA FASE 3.6
+--------------------------------------------------------------------------------
+  - tests/test_ventanas_contables.py (11): que la cobertura se mide bien en el
+    caso sano y con un hueco, que la YoY no suma un trimestre, que el burn-in
+    no se marca como valido, que la tolerancia es configurable, que el motor la
+    expone y la ficha la publica, que el resumen agregado cuadra, que la
+    columna VENTANA imprime los dias y marca el desvio, y que el contador de
+    trimestres en caida descarta las ventanas invalidas.
+  - tests/test_calendario_negociacion.py (12): que el default reproduce
+    EXACTAMENTE los literales de antes, que el campo se pasa por CLI, que la
+    volatilidad escala con la raiz del calendario, que la beta rolling usa una
+    ventana de un ano, que los cinco sitios de RiskSimulationEngine se mueven
+    juntos, que el drawdown maximo NO se mueve (no se anualiza), que el DSR se
+    de-anualiza con la raiz correcta, que los horizontes del abanico son de
+    calendario, que el historico efectivo y los retornos forward tambien, y —
+    guarda deliberada — que el momentum sigue siendo literal.
+  - 4 tests nuevos en test_denominadores_degenerados.py para el umbral del ROIC
+    (ver 3.6a).

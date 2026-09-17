@@ -1,0 +1,11 @@
+yfinance==0.2.38
+pandas==2.2.2
+numpy==1.26.4
+scipy==1.13.0
+statsmodels==0.14.2
+scikit-learn==1.4.2
+xgboost==2.0.3
+matplotlib==3.8.4
+arch==7.0.0
+requests==2.32.3
+pytest==8.2.2
